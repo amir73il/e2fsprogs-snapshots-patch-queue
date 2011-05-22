@@ -1,0 +1,189 @@
+e2fsprogs: Cleanup snapshot list when removing has_snapshot feature
+
+From: Amir Goldstein <amir73il@users.sf.net>
+
+Discard all snapshots by 'tune2fs -O ^has_snapshot'.
+Snapshot inodes are chained on a list starting at the super block.
+Delete all snapshot inodes on the list and reset exclude bitmap.
+
+Signed-off-by: Amir Goldstein <amir73il@users.sf.net>
+
+diff --git a/misc/tune2fs.c b/misc/tune2fs.c
+index 4232323..4f399d4 100644
+--- a/misc/tune2fs.c
++++ b/misc/tune2fs.c
+@@ -272,39 +272,140 @@ static int release_blocks_proc(ext2_filsys fs, blk64_t *blocknr,
+ }
+ 
+ /*
+- * Remove the journal inode from the filesystem
++ * Remove a special inode from the filesystem:
++ * - journal inode, @nlink = 0
++ * - snapshot inodes, @nlink = 1 (snapshots directory)
+  */
+-static void remove_journal_inode(ext2_filsys fs)
++static void remove_special_inode(ext2_filsys fs, ext2_ino_t ino,
++		struct ext2_inode *inode, int nlink)
+ {
+-	struct ext2_inode	inode;
+-	errcode_t		retval;
+-	ino_t			ino = fs->super->s_journal_inum;
+-
+-	retval = ext2fs_read_inode(fs, ino,  &inode);
++	int retval = ext2fs_read_bitmaps(fs);
+ 	if (retval) {
+ 		com_err(program_name, retval,
+-			_("while reading journal inode"));
++				_("while reading bitmaps"));
++		exit(1);
++	}
++	retval = ext2fs_block_iterate3(fs, ino,
++			BLOCK_FLAG_READ_ONLY, NULL,
++			release_blocks_proc, NULL);
++	if (retval) {
++		com_err(program_name, retval,
++				_("while clearing inode"));
+ 		exit(1);
+ 	}
+-	if (ino == EXT2_JOURNAL_INO) {
+-		retval = ext2fs_read_bitmaps(fs);
++	if (nlink) {
++		/* reset truncated inode */
++		inode->i_size = 0;
++		inode->i_size_high = 0;
++		inode->i_blocks = 0;
++		memset(inode->i_block, 0, sizeof(inode->i_block));
++	} else {
++		/* clear unlinked inode */
++		memset(inode, 0, sizeof(*inode));
++	}
++	ext2fs_mark_bb_dirty(fs);
++	fs->flags &= ~EXT2_FLAG_SUPER_ONLY;
++}
++
++/*
++ * Discard snapshots list (free all snapshot blocks)
++ */
++static void discard_snapshot_list(ext2_filsys fs)
++{
++	struct ext2_super_block *sb = fs->super;
++	struct ext2_inode	inode;
++	ext2_ino_t		ino = sb->s_snapshot_list;
++	errcode_t		retval;
++	int i = 0;
++	
++	if (!ino)
++		/* no snapshot list, but maybe active snapshot exists? */
++		ino = sb->s_snapshot_inum;
++	if (ino)
++		fputs(_("Discarding snapshots: "), stderr);
++
++	while (ino) {
++		retval = ext2fs_read_inode(fs, ino,  &inode);
+ 		if (retval) {
+ 			com_err(program_name, retval,
+-				_("while reading bitmaps"));
++					_("while reading snapshot inode %u"),
++					ino);
+ 			exit(1);
+ 		}
+-		retval = ext2fs_block_iterate3(fs, ino,
+-					       BLOCK_FLAG_READ_ONLY, NULL,
+-					       release_blocks_proc, NULL);
++
++		remove_special_inode(fs, ino, &inode, 1);
++
++		retval = ext2fs_write_inode(fs, ino, &inode);
+ 		if (retval) {
+ 			com_err(program_name, retval,
+-				_("while clearing journal inode"));
++					_("while writing snapshot inode %u"),
++					ino);
+ 			exit(1);
+ 		}
+-		memset(&inode, 0, sizeof(inode));
+-		ext2fs_mark_bb_dirty(fs);
++
++		fprintf(stderr, _("%u,"), inode.i_generation);
++		ino = inode.i_next_snapshot;
++		i++;
++	}
++	
++	if (i > 0) {
++		sb->s_snapshot_inum = 0;
++		sb->s_snapshot_id = 0;
++		sb->s_snapshot_r_blocks_count = 0;
++		sb->s_snapshot_list = 0;
++		fputs(_("done\n"), stderr);
++	}
++	
++	/* no snapshots, so no snapshot problems to fix */
++	sb->s_flags &= ~EXT2_FLAGS_FIX_SNAPSHOT;
++	fs->flags &= ~EXT2_FLAG_SUPER_ONLY;
++	ext2fs_mark_super_dirty(fs);
++}
++
++/*
++ * Reset exclude bitmap (uninit exclude bitmap blocks)
++ */
++static void reset_exclude_bitmap(ext2_filsys fs)
++{
++	struct ext2_group_desc *gd;
++	int set_csum = 0, gd_dirty = 0;
++	dgrp_t i;
++
++	if (fs->super->s_feature_ro_compat &
++			EXT4_FEATURE_RO_COMPAT_GDT_CSUM)
++		set_csum = 1;
++
++	for (i = 0; i < fs->group_desc_count; i++) {
++		gd = ext2fs_group_desc(fs, fs->group_desc, i);
++		if (gd->bg_flags & EXT2_BG_EXCLUDE_UNINIT)
++			continue;
++		gd->bg_flags |= EXT2_BG_EXCLUDE_UNINIT;
++		if (set_csum)
++			ext2fs_group_desc_csum_set(fs, i);
++		gd_dirty = 1;
++	}
++	if (gd_dirty)
+ 		fs->flags &= ~EXT2_FLAG_SUPER_ONLY;
+-	} else
++}
++
++/*
++ * Remove the journal inode from the filesystem
++ */
++static void remove_journal_inode(ext2_filsys fs)
++{
++	struct ext2_inode	inode;
++	errcode_t		retval;
++	ino_t			ino = fs->super->s_journal_inum;
++
++	retval = ext2fs_read_inode(fs, ino,  &inode);
++	if (retval) {
++		com_err(program_name, retval,
++			_("while reading journal inode"));
++		exit(1);
++	}
++	if (ino == EXT2_JOURNAL_INO)
++		remove_special_inode(fs, ino, &inode, 0);
++	 else
+ 		inode.i_flags &= ~EXT2_IMMUTABLE_FL;
+ 	retval = ext2fs_write_inode(fs, ino, &inode);
+ 	if (retval) {
+@@ -470,6 +571,15 @@ static void update_feature_set(ext2_filsys fs, char *features)
+ 		sb->s_feature_compat &= ~EXT3_FEATURE_COMPAT_HAS_JOURNAL;
+ 	}
+ 
++	if (FEATURE_OFF_SAFE(E2P_FEATURE_RO_INCOMPAT,
++				EXT4_FEATURE_RO_COMPAT_HAS_SNAPSHOT)) {
++		discard_snapshot_list(fs);
++		if (sb->s_feature_compat & 
++				EXT2_FEATURE_COMPAT_EXCLUDE_BITMAP)
++			/* uninit exclude bitmap blocks */
++			reset_exclude_bitmap(fs);
++	}
++
+ 	if (FEATURE_ON_SAFE(E2P_FEATURE_RO_INCOMPAT,
+ 				EXT4_FEATURE_RO_COMPAT_HAS_SNAPSHOT)) {
+ 		int big_journal = 0;

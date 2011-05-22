@@ -1,0 +1,150 @@
+e2fsprogs: Check snapshot list on fsck
+
+From: Amir Goldstein <amir73il@users.sf.net>
+
+Check that all inodes on snapshot list are valid snapshots and
+prompt to terminate list when bad inode is found.
+
+Signed-off-by: Amir Goldstein <amir73il@users.sf.net>
+
+diff --git a/e2fsck/problem.c b/e2fsck/problem.c
+index c8faddc..693f41f 100644
+--- a/e2fsck/problem.c
++++ b/e2fsck/problem.c
+@@ -40,7 +40,8 @@
+ #define PROMPT_UNLINK	17
+ #define PROMPT_CLEAR_HTREE 18
+ #define PROMPT_RECREATE 19
+-#define PROMPT_NULL	20
++#define PROMPT_TERMINATE_LIST 20
++#define PROMPT_NULL	22
+ 
+ /*
+  * These are the prompts which are used to ask the user if they want
+@@ -67,7 +68,8 @@ static const char *prompt[] = {
+ 	N_("Unlink"),		/* 17 */
+ 	N_("Clear HTree index"),/* 18 */
+ 	N_("Recreate"),		/* 19 */
+-	"",			/* 20 */
++	N_("Terminate list"),	/* 20 */
++	"",			/* 22 */
+ };
+ 
+ /*
+@@ -332,6 +334,11 @@ static struct e2fsck_problem problem_table[] = {
+ 	  N_("Resize @i not valid.  "),
+ 	  PROMPT_RECREATE, 0 },
+ 
++	/* Bad snapshot on list */
++	{ PR_0_BAD_SNAPSHOT,
++	  N_("Bad @i found on snapshot list.  "),
++	  PROMPT_TERMINATE_LIST, PR_PREEN_OK },
++
+ 	/* Last mount time is in the future */
+ 	{ PR_0_FUTURE_SB_LAST_MOUNT,
+ 	  N_("@S last mount time (%t,\n\tnow = %T) is in the future.\n"),
+diff --git a/e2fsck/problem.h b/e2fsck/problem.h
+index 4c5efd8..d81fa16 100644
+--- a/e2fsck/problem.h
++++ b/e2fsck/problem.h
+@@ -228,6 +228,9 @@ struct problem_context {
+ /* Block group checksum (latch question) */
+ #define PR_0_GDT_CSUM_LATCH			0x00003E
+ 
++/* Bas snapshot on list */
++#define PR_0_BAD_SNAPSHOT			0x000102
++
+ 
+ /*
+  * Pass 1 errors
+diff --git a/e2fsck/super.c b/e2fsck/super.c
+index 79025e5..18eb8ce 100644
+--- a/e2fsck/super.c
++++ b/e2fsck/super.c
+@@ -432,6 +432,75 @@ cleanup:
+  }
+ 
+ /*
++ * Check that snapshot list contains valid snapshot files.
++ * Returns the number of valid snapshots on list.
++ *
++ * TODO: cleanup orphan snapshot files (not found on list)
++ */
++static int check_snapshot_list(e2fsck_t ctx)
++{
++	ext2_filsys fs = ctx->fs;
++	struct ext2_super_block *sb = fs->super;
++	struct ext2_inode	inode;
++	struct ext2_inode	inode_prev;
++	ext2_ino_t		ino = sb->s_snapshot_list;
++	ext2_ino_t		ino_prev = 0;
++	errcode_t		retval = 0;
++	struct problem_context	pctx;
++	int i = 0;
++	
++	if (!ino && sb->s_snapshot_inum) {
++		/* reset snapshot list head to active snapshot */
++		ino = sb->s_snapshot_list = sb->s_snapshot_inum;
++		ext2fs_mark_super_dirty(fs);
++	}
++	if (ino)
++		fputs(_("Checking snapshots: "), stderr);
++
++	while (ino) {
++		retval = ext2fs_read_inode(fs, ino,  &inode);
++		if (retval || !(inode.i_flags & EXT4_SNAPFILE_FL) ||
++				!LINUX_S_ISREG(inode.i_mode) || 
++				inode.i_dtime) {
++			if (ino == sb->s_snapshot_list) {
++				/* reset list head */
++				sb->s_snapshot_list = 0;
++				ext2fs_mark_super_dirty(fs);
++				ino = sb->s_snapshot_inum;
++				continue;
++			}
++			clear_problem_context(&pctx);
++			if (!fix_problem(ctx, PR_0_BAD_SNAPSHOT, &pctx))
++				break;
++
++			/* disconnect inode from snapshot list */
++			if (ino == sb->s_snapshot_inum) {
++				/* reset active snapshot */
++				sb->s_snapshot_inum = 0;
++				ext2fs_mark_super_dirty(fs);
++			}
++			if (ino_prev) {
++				/* terminate list at prev inode */
++				inode_prev.i_next_snapshot = 0;
++				e2fsck_write_inode(ctx, ino_prev, &inode_prev,
++						"terminate snapshot list");
++			}
++			break;
++		}
++
++		fprintf(stderr, _("%u,"), inode.i_generation);
++		inode_prev = inode;
++		ino_prev = ino;
++		ino = inode.i_next_snapshot;
++		i++;
++	}
++	
++	if (ino_prev && !ino)
++		fputs(_("done\n"), stderr);
++	return i;
++}
++
++/*
+  * This function checks if the file system has snapshots
+  */
+ void check_snapshots(e2fsck_t ctx)
+@@ -444,6 +513,10 @@ void check_snapshots(e2fsck_t ctx)
+ 		/* no snapshots */
+ 		return;
+ 
++	if (!check_snapshot_list(ctx))
++		/* no valid snapshots on list */
++		return;
++
+ 	if (!sb->s_snapshot_inum)
+ 		/* no active snapshot */
+ 		return;

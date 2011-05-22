@@ -1,0 +1,210 @@
+e2fsprogs: Map maximum filesystem size with a single snapshot file
+
+From: Amir Goldstein <amir73il@users.sf.net>
+
+To map 2^32 logical blocks, 4 triple indirect blocks are used instead
+of just one.  The extra 3 triple indirect blocks are stored in-place
+of direct blocks, which are not in use by snapshot files.
+Snapshots cannot be enabled on filesytem with block size < 4K.
+
+Signed-off-by: Amir Goldstein <amir73il@users.sf.net>
+
+diff --git a/e2fsck/pass1.c b/e2fsck/pass1.c
+index d90196c..8d84ca4 100644
+--- a/e2fsck/pass1.c
++++ b/e2fsck/pass1.c
+@@ -1081,6 +1081,7 @@ void e2fsck_pass1(e2fsck_t ctx)
+ 		    (inode->i_block[EXT2_IND_BLOCK] ||
+ 		     inode->i_block[EXT2_DIND_BLOCK] ||
+ 		     inode->i_block[EXT2_TIND_BLOCK] ||
++		     (inode->i_flags & EXT4_SNAPFILE_FL) ||
+ 		     ext2fs_file_acl_block(inode))) {
+ 			inodes_to_process[process_inode_count].ino = ino;
+ 			inodes_to_process[process_inode_count].inode = *inode;
+@@ -1988,8 +1989,10 @@ static void check_blocks(e2fsck_t ctx, struct problem_context *pctx,
+ 		}
+ 	}
+ 
+-	if (!(fs->super->s_feature_ro_compat &
+-	      EXT4_FEATURE_RO_COMPAT_HUGE_FILE) ||
++	if ((!(fs->super->s_feature_ro_compat &
++	       EXT4_FEATURE_RO_COMPAT_HUGE_FILE) &&
++	     /* snapshot file always supports the 'huge_file' flag */
++	     !(inode->i_flags & EXT4_SNAPFILE_FL)) ||
+ 	    !(inode->i_flags & EXT4_HUGE_FILE_FL))
+ 		pb.num_blocks *= (fs->blocksize / 512);
+ #if 0
+@@ -2020,6 +2023,7 @@ static void check_blocks(e2fsck_t ctx, struct problem_context *pctx,
+ 		    !(inode->i_flags & EXT4_EOFBLOCKS_FL))
+ 			bad_size = 3;
+ 		else if (!(extent_fs && (inode->i_flags & EXT4_EXTENTS_FL)) &&
++			 !(pb.is_reg && (inode->i_flags & EXT4_SNAPFILE_FL)) &&
+ 			 size > ext2_max_sizes[fs->super->s_log_block_size])
+ 			/* too big for a direct/indirect-mapped file */
+ 			bad_size = 4;
+@@ -2058,8 +2062,10 @@ static void check_blocks(e2fsck_t ctx, struct problem_context *pctx,
+ 	    (inode->i_size_high || inode->i_size & 0x80000000UL))
+ 		ctx->large_files++;
+ 	if ((pb.num_blocks != ext2fs_inode_i_blocks(fs, inode)) ||
+-	    ((fs->super->s_feature_ro_compat &
+-	      EXT4_FEATURE_RO_COMPAT_HUGE_FILE) &&
++	    (((fs->super->s_feature_ro_compat &
++	       EXT4_FEATURE_RO_COMPAT_HUGE_FILE) ||
++	      /* snapshot file always supports the 'huge_file' flag */
++	      (inode->i_flags & EXT4_SNAPFILE_FL)) &&
+ 	     (inode->i_flags & EXT4_HUGE_FILE_FL) &&
+ 	     (inode->osd2.linux2.l_i_blocks_hi != 0))) {
+ 		pctx->num = pb.num_blocks;
+diff --git a/lib/ext2fs/block.c b/lib/ext2fs/block.c
+index 0e4ec77..358873d 100644
+--- a/lib/ext2fs/block.c
++++ b/lib/ext2fs/block.c
+@@ -485,6 +485,12 @@ errcode_t ext2fs_block_iterate3(ext2_filsys fs,
+ 	 * Iterate over normal data blocks
+ 	 */
+ 	for (i = 0; i < EXT2_NDIR_BLOCKS ; i++, ctx.bcount++) {
++		if ((inode.i_flags & EXT4_SNAPFILE_FL) &&
++				LINUX_S_ISREG(inode.i_mode) &&
++				i < EXT4_EXTRA_TIND_BLOCKS)
++			/* snapshot file extra triple indirect blocks */
++			continue;
++
+ 		if (inode.i_block[i] || (flags & BLOCK_FLAG_APPEND)) {
+ 			blk64 = inode.i_block[i];
+ 			ret |= (*ctx.func)(fs, &blk64, ctx.bcount, 0, i, 
+@@ -515,6 +521,17 @@ errcode_t ext2fs_block_iterate3(ext2_filsys fs,
+ 		if (ret & BLOCK_ABORT)
+ 			goto abort_exit;
+ 	}
++	if ((inode.i_flags & EXT4_SNAPFILE_FL) && LINUX_S_ISREG(inode.i_mode)) {
++		/* iterate snapshot file extra triple indirect blocks */
++		for (i = 0; i < EXT4_EXTRA_TIND_BLOCKS; i++) {
++			if (!inode.i_block[i] && !(flags & BLOCK_FLAG_APPEND))
++				continue;
++			ret |= block_iterate_tind(&inode.i_block[i],
++					0, EXT2_N_BLOCKS+i, &ctx);
++			if (ret & BLOCK_ABORT)
++				goto abort_exit;
++		}
++	}
+ 
+ abort_exit:
+ 	if (ret & BLOCK_CHANGED) {
+diff --git a/lib/ext2fs/bmap.c b/lib/ext2fs/bmap.c
+index fbcb375..aecd9a2 100644
+--- a/lib/ext2fs/bmap.c
++++ b/lib/ext2fs/bmap.c
+@@ -136,6 +136,8 @@ errcode_t ext2fs_bmap2(ext2_filsys fs, ext2_ino_t ino, struct ext2_inode *inode,
+ 	struct ext2_inode inode_buf;
+ 	ext2_extent_handle_t handle = 0;
+ 	blk_t addr_per_block;
++	blk64_t addr_per_tind_block;
++	int	tind;
+ 	blk_t	b, blk32;
+ 	char	*buf = 0;
+ 	errcode_t	retval = 0;
+@@ -286,7 +288,20 @@ errcode_t ext2fs_bmap2(ext2_filsys fs, ext2_ino_t ino, struct ext2_inode *inode,
+ 
+ 	/* Triply indirect block */
+ 	block -= addr_per_block * addr_per_block;
+-	b = inode_bmap(inode, EXT2_TIND_BLOCK);
++	tind = EXT2_TIND_BLOCK;
++	addr_per_tind_block = addr_per_block * addr_per_block * addr_per_block;
++	if (block > addr_per_tind_block) {
++		/* use direct blocks as extra triple indirect blocks? */
++		tind = block / addr_per_tind_block;
++		block -= tind * addr_per_tind_block;
++		if (!(inode->i_flags & EXT4_SNAPFILE_FL) ||
++				!LINUX_S_ISREG(inode->i_mode) ||
++				tind >= EXT4_EXTRA_TIND_BLOCKS) {
++			retval = EXT2_ET_BAD_BLOCK_NUM;
++			goto done;
++		}
++	}
++	b = inode_bmap(inode, tind);
+ 	if (!b) {
+ 		if (!(bmap_flags & BMAP_ALLOC)) {
+ 			if (bmap_flags & BMAP_SET)
+@@ -298,7 +313,7 @@ errcode_t ext2fs_bmap2(ext2_filsys fs, ext2_ino_t ino, struct ext2_inode *inode,
+ 		retval = ext2fs_alloc_block(fs, b, block_buf, &b);
+ 		if (retval)
+ 			goto done;
+-		inode_bmap(inode, EXT2_TIND_BLOCK) = b;
++		inode_bmap(inode, tind) = b;
+ 		blocks_alloc++;
+ 	}
+ 	retval = block_tind_bmap(fs, bmap_flags, b, block_buf,
+diff --git a/lib/ext2fs/ext2_fs.h b/lib/ext2fs/ext2_fs.h
+index 63637fd..f0aa098 100644
+--- a/lib/ext2fs/ext2_fs.h
++++ b/lib/ext2fs/ext2_fs.h
+@@ -251,6 +251,17 @@ struct ext2_dx_countlimit {
+ #define EXT2_DIND_BLOCK			(EXT2_IND_BLOCK + 1)
+ #define EXT2_TIND_BLOCK			(EXT2_DIND_BLOCK + 1)
+ #define EXT2_N_BLOCKS			(EXT2_TIND_BLOCK + 1)
++/*
++ * Snapshot files have different indirection mapping that can map up to 2^32
++ * logical blocks, so they can cover the mapped filesystem block address space.
++ * Snapshots must use either 4K or 8K blocks (depending on PAGE_SIZE).
++ * With 8K blocks, 1 triple indirect block maps 2^33 logical blocks.
++ * With 4K blocks (the system default), each triple indirect block maps 2^30
++ * logical blocks, so 4 triple indirect blocks map 2^32 logical blocks.
++ * Snapshot files in small filesystems (<= 4G), use only 1 double indirect
++ * block to map the entire filesystem.
++ */
++#define	EXT4_EXTRA_TIND_BLOCKS		3
+ 
+ /*
+  * Inode flags
+diff --git a/lib/ext2fs/i_block.c b/lib/ext2fs/i_block.c
+index 39d93ee..1bafdab 100644
+--- a/lib/ext2fs/i_block.c
++++ b/lib/ext2fs/i_block.c
+@@ -34,8 +34,10 @@ errcode_t ext2fs_iblk_add_blocks(ext2_filsys fs, struct ext2_inode *inode,
+ 	if (fs->super->s_feature_ro_compat & EXT4_FEATURE_RO_COMPAT_HUGE_FILE)
+ 		b += ((long long) inode->osd2.linux2.l_i_blocks_hi) << 32;
+ 
+-	if (!(fs->super->s_feature_ro_compat &
++	if (!((fs->super->s_feature_ro_compat &
+ 	      EXT4_FEATURE_RO_COMPAT_HUGE_FILE) ||
++	     /* snapshot file always supports the 'huge_file' flag */
++	     (inode->i_flags & EXT4_SNAPFILE_FL)) ||
+ 	    !(inode->i_flags & EXT4_HUGE_FILE_FL))
+ 	    num_blocks *= fs->blocksize / 512;
+ 
+@@ -57,8 +59,10 @@ errcode_t ext2fs_iblk_sub_blocks(ext2_filsys fs, struct ext2_inode *inode,
+ 	if (fs->super->s_feature_ro_compat & EXT4_FEATURE_RO_COMPAT_HUGE_FILE)
+ 		b += ((long long) inode->osd2.linux2.l_i_blocks_hi) << 32;
+ 
+-	if (!(fs->super->s_feature_ro_compat &
++	if (!((fs->super->s_feature_ro_compat &
+ 	      EXT4_FEATURE_RO_COMPAT_HUGE_FILE) ||
++	     /* snapshot file always supports the 'huge_file' flag */
++	     (inode->i_flags & EXT4_SNAPFILE_FL)) ||
+ 	    !(inode->i_flags & EXT4_HUGE_FILE_FL))
+ 	    num_blocks *= fs->blocksize / 512;
+ 
+@@ -75,8 +79,10 @@ errcode_t ext2fs_iblk_sub_blocks(ext2_filsys fs, struct ext2_inode *inode,
+ 
+ errcode_t ext2fs_iblk_set(ext2_filsys fs, struct ext2_inode *inode, blk64_t b)
+ {
+-	if (!(fs->super->s_feature_ro_compat &
++	if (!((fs->super->s_feature_ro_compat &
+ 	      EXT4_FEATURE_RO_COMPAT_HUGE_FILE) ||
++	     /* snapshot file always supports the 'huge_file' flag */
++	     (inode->i_flags & EXT4_SNAPFILE_FL)) ||
+ 	    !(inode->i_flags & EXT4_HUGE_FILE_FL))
+ 		b *= fs->blocksize / 512;
+ 
+diff --git a/misc/e2image.c b/misc/e2image.c
+index 003ac5a..d9e0681 100644
+--- a/misc/e2image.c
++++ b/misc/e2image.c
+@@ -536,6 +536,7 @@ static void write_raw_image_file(ext2_filsys fs, int fd, int scramble_flag)
+ 			}
+ 		} else {
+ 			if ((inode.i_flags & EXT4_EXTENTS_FL) ||
++			    (inode.i_flags & EXT4_SNAPFILE_FL) ||
+ 			    inode.i_block[EXT2_IND_BLOCK] ||
+ 			    inode.i_block[EXT2_DIND_BLOCK] ||
+ 			    inode.i_block[EXT2_TIND_BLOCK]) {

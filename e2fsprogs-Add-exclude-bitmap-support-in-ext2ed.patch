@@ -1,0 +1,125 @@
+e2fsprogs: Add exclude bitmap support in ext2ed.
+
+From: Yongqiang Yang <xiaoqiangnk@gmail.com>
+
+Exclude bitmap is a feature needed by ext4 snapshot.  This patch
+adds exclude bitmap support in ext2ed.
+
+Signed-off-by: Yongqiang Yang <xiaoqiangnk@gmail.com>
+---
+ ext2ed/ext2ed.h    |   17 +++++++++++++++++
+ ext2ed/group_com.c |   14 ++++++++++++++
+ ext2ed/init.c      |   10 ++++++++++
+ ext2ed/main.c      |    1 +
+ 4 files changed, 42 insertions(+), 0 deletions(-)
+
+diff --git a/ext2ed/ext2ed.h b/ext2ed/ext2ed.h
+index 2ee483e..f17e9fc 100644
+--- a/ext2ed/ext2ed.h
++++ b/ext2ed/ext2ed.h
+@@ -163,6 +163,11 @@ struct struct_block_bitmap_info {			/* Used in blockbitmap_com.c */
+ 	unsigned long group_num;
+ };
+ 
++struct struct_exclude_bitmap_info {			/* Used in excludebitmap_com.c */
++	unsigned long entry_num;
++	unsigned long group_num;
++};
++
+ struct struct_inode_bitmap_info {			/* Used in inodebitmap_com.c */
+ 	unsigned long entry_num;
+ 	unsigned long group_num;
+@@ -398,6 +403,7 @@ extern void type_ext2_group_desc___show (char *command_line);
+ extern void type_ext2_group_desc___inode (char *command_line);
+ extern void type_ext2_group_desc___gocopy (char *command_line);
+ extern void type_ext2_group_desc___blockbitmap (char *command_line);
++extern void type_ext2_group_desc___excludebitmap (char *command_line);
+ extern void type_ext2_group_desc___inodebitmap (char *command_line);
+ extern void type_ext2_group_desc___setactivecopy (char *command_line);
+ 
+@@ -412,6 +418,17 @@ extern void type_ext2_block_bitmap___deallocate (char *command_line);
+ void allocate_block (long entry_num);
+ void deallocate_block (long entry_num);
+ 
++/* exlcudebitmap_com.c */
++
++extern void type_ext2_exclude_bitmap___show (char *command_line);
++extern void type_ext2_exclude_bitmap___entry (char *command_line);
++extern void type_ext2_exclude_bitmap___next (char *command_line);
++extern void type_ext2_exclude_bitmap___prev (char *command_line);
++extern void type_ext2_exclude_bitmap___allocate (char *command_line);
++extern void type_ext2_exclude_bitmap___deallocate (char *command_line);
++void exclude_block (long entry_num);
++void deexclude_block (long entry_num);
++
+ /* inodebitmap_bom.c */
+ 
+ extern void type_ext2_inode_bitmap___show (char *command_line);
+diff --git a/ext2ed/group_com.c b/ext2ed/group_com.c
+index 2532553..1f9a949 100644
+--- a/ext2ed/group_com.c
++++ b/ext2ed/group_com.c
+@@ -156,6 +156,20 @@ void type_ext2_group_desc___blockbitmap (char *command_line)
+ 	sprintf (buffer,"settype block_bitmap");dispatch (buffer);
+ }
+ 
++void type_ext2_group_desc___excludebitmap (char *command_line)
++
++{
++	long exclude_bitmap_offset;
++	char buffer [80];
++
++	exclude_bitmap_info.entry_num=0;
++	exclude_bitmap_info.group_num=group_info.group_num;
++
++	exclude_bitmap_offset=type_data.u.t_ext2_group_desc.bg_exclude_bitmap;
++	sprintf (buffer,"setoffset block %ld",exclude_bitmap_offset);dispatch (buffer);
++	sprintf (buffer,"settype exclude_bitmap");dispatch (buffer);
++}
++
+ void type_ext2_group_desc___inodebitmap (char *command_line)
+ 
+ {
+diff --git a/ext2ed/init.c b/ext2ed/init.c
+index 3815ab5..a7272b1 100644
+--- a/ext2ed/init.c
++++ b/ext2ed/init.c
+@@ -322,6 +322,7 @@ Set specific type user commands.
+ 		add_user_command (&ptr->type_commands,"inode","Pass to the inode table of the current group block",type_ext2_group_desc___inode);
+ 		add_user_command (&ptr->type_commands,"gocopy","Move to another backup copy of the group descriptor",type_ext2_group_desc___gocopy);
+ 		add_user_command (&ptr->type_commands,"blockbitmap","Show the block allocation bitmap of the current group block",type_ext2_group_desc___blockbitmap);
++		add_user_command (&ptr->type_commands,"excludebitmap","Show the snapshot exclude bitmap of the current group block",type_ext2_group_desc__excludebitmap);
+ 		add_user_command (&ptr->type_commands,"inodebitmap","Show the inode allocation bitmap of the current group block",type_ext2_group_desc___inodebitmap);
+ 		add_user_command (&ptr->type_commands,"setactivecopy","Copies the current group descriptor to the main table",type_ext2_super_block___setactivecopy);
+ 	}
+@@ -335,6 +336,15 @@ Set specific type user commands.
+ 		add_user_command (&ptr->type_commands,"deallocate","Deallocates the current block",type_ext2_block_bitmap___deallocate);
+ 	}
+ 
++		if (strcmp ((ptr->name),"exlcude_bitmap")==0) {
++		add_user_command (&ptr->type_commands,"show","Displays the snapshot exclude bitmap",type_ext2_exclude_bitmap___show);
++		add_user_command (&ptr->type_commands,"entry","Moves to a specific bit",type_ext2_exclude_bitmap___entry);
++		add_user_command (&ptr->type_commands,"next","Moves to the next bit",type_ext2_exclude_bitmap___next);
++		add_user_command (&ptr->type_commands,"prev","Moves to the previous bit",type_ext2_exclude_bitmap___prev);
++		add_user_command (&ptr->type_commands,"exclude","Excludes the current block",type_ext2_exclude_bitmap___exclude);
++		add_user_command (&ptr->type_commands,"deexclude","Deexcludes the current block",type_ext2_exclude_bitmap___deexclude);
++	}
++
+ 	if (strcmp ((ptr->name),"inode_bitmap")==0) {
+ 		add_user_command (&ptr->type_commands,"show","Displays the inode allocation bitmap",type_ext2_inode_bitmap___show);
+ 		add_user_command (&ptr->type_commands,"entry","Moves to a specific bit",type_ext2_inode_bitmap___entry);
+diff --git a/ext2ed/main.c b/ext2ed/main.c
+index 50a3f07..6bb4e0b 100644
+--- a/ext2ed/main.c
++++ b/ext2ed/main.c
+@@ -83,6 +83,7 @@ struct struct_group_info group_info;				/* Used by group_com.c */
+ struct struct_super_info super_info;				/* Used by super_com.c */
+ struct struct_remember_lifo remember_lifo;			/* A circular memory of objects */
+ struct struct_block_bitmap_info block_bitmap_info;		/* Used by blockbitmap_com.c */
++struct struct_exlcude_bitmap_info exclude_bitmap_info;		/* Used by excludebitmap_com.c */
+ struct struct_inode_bitmap_info inode_bitmap_info;		/* Used by inodebitmap_com.c */
+ 
+ int redraw_request=0;						/* Is set by a signal handler to handle terminal */
+-- 
+1.7.5.1
+

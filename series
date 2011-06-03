@@ -8,3 +8,10 @@ e2fsprogs__check_snapshot_list_on_fsck
 e2fsprogs__delete_all_snapshots_on_e2fsck_-x
 e2fsprogs__map_maximum_filesystem_size_with_a_single_snapshot_file
 e2fsprogs__dump_message_buffer_on_fsck
+e2fsprogs-Add-exclude-bitmap-support-in-mkfs.patch
+e2fsprogs-Add-exclude-bitmap-support-in-e2fsck.patch
+e2fsprogs-Add-exclude-bitmap-support-in-dumpe2fs.patch
+e2fsprogs-Add-exclude-bitmap-support-in-tune2fs.patch
+e2fsprogs-Add-exclude-bitmap-support-in-e2image.patch
+e2fsprogs-Add-exclude-bitmap-support-in-debugfs.patch
+e2fsprogs-Add-exclude-bitmap-support-in-ext2ed.patch

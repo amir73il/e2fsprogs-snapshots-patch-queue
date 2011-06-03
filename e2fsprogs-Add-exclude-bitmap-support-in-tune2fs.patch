@@ -1,0 +1,48 @@
+e2fsprogs: Add exclude bitmap support in tune2fs.
+
+From: Yongqiang Yang <xiaoqiangnk@gmail.com>
+
+Exclude bitmap is a feature needed by ext4 snapshot.  This patch
+adds exclude bitmap support in tune2fs.
+
+Signed-off-by: Yongqiang Yang <xiaoqiangnk@gmail.com>
+---
+ misc/tune2fs.c |   15 +++++++++++++++
+ 1 files changed, 15 insertions(+), 0 deletions(-)
+
+diff --git a/misc/tune2fs.c b/misc/tune2fs.c
+index 4f399d4..f427cdd 100644
+--- a/misc/tune2fs.c
++++ b/misc/tune2fs.c
+@@ -1263,6 +1263,10 @@ static int ext2fs_is_meta_block(ext2_filsys fs, blk_t blk)
+ 	group = ext2fs_group_of_blk(fs, blk);
+ 	if (ext2fs_block_bitmap_loc(fs, group) == blk)
+ 		return 1;
++	if (EXT2_HAS_COMPAT_FEATURE(fs->super,
++				    EXT2_FEATURE_COMPAT_EXCLUDE_BITMAP) &&
++	    ext2fs_exclude_bitmap_loc(fs, group) == blk)
++		return 1;
+ 	if (ext2fs_inode_bitmap_loc(fs, group) == blk)
+ 		return 1;
+ 	return 0;
+@@ -1481,6 +1485,17 @@ static int group_desc_scan_and_fix(ext2_filsys fs, ext2fs_block_bitmap bmap)
+ 			ext2fs_block_bitmap_loc_set(fs, i, new_blk);
+ 		}
+ 
++		if (EXT2_HAS_COMPAT_FEATURE(fs->super,
++				    EXT2_FEATURE_COMPAT_EXCLUDE_BITMAP)) {
++			blk = ext2fs_exclude_bitmap_loc(fs, i);
++			if (ext2fs_test_block_bitmap(bmap, blk)) {
++				new_blk = translate_block(blk);
++				if (!new_blk)
++					continue;
++				ext2fs_exclude_bitmap_loc_set(fs, i, new_blk);
++			}
++		}
++
+ 		blk = ext2fs_inode_bitmap_loc(fs, i);
+ 		if (ext2fs_test_block_bitmap2(bmap, blk)) {
+ 			new_blk = translate_block(blk);
+-- 
+1.7.5.1
+

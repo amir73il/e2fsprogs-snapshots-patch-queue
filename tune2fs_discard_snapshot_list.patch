@@ -1,4 +1,4 @@
-e2fsprogs: Cleanup snapshot list when removing has_snapshot feature
+tune2fs: Discard snapshot list when removing has_snapshot feature
 
 From: Amir Goldstein <amir73il@users.sf.net>
 

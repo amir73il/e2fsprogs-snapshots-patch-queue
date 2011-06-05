@@ -1,8 +1,8 @@
-e2fsprogs: Delete all snapshots on e2fsck -x
+e2fsck: Discard all snapshots
 
 From: Amir Goldstein <amir73il@users.sf.net>
 
-On e2fsck -x or if the 'fix_snapshot' flag is set, prompt to delete
+On e2fsck -x or if the 'fix_snapshot' flag is set, prompt to discard
 all snapshot inodes and reset exclude bitmap.
 
 Signed-off-by: Amir Goldstein <amir73il@users.sf.net>

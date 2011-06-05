@@ -1,4 +1,4 @@
-e2fsprogs: Create a big journal for COW operations
+mke2fs: Create a big journal for COW operations
 
 From: Amir Goldstein <amir73il@users.sf.net>
 

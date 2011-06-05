@@ -1,4 +1,4 @@
-e2fsprogs: Check snapshot list on fsck
+e2fsck: Check snapshot list
 
 From: Amir Goldstein <amir73il@users.sf.net>
 

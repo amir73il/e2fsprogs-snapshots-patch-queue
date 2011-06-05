@@ -1,4 +1,4 @@
-e2fsprogs: Dump message buffer on fsck
+e2fsck: Dump message buffer
 
 From: Amir Goldstein <amir73il@users.sf.net>
 

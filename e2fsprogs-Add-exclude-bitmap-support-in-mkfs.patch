@@ -34,10 +34,10 @@ index 3a8f332..6c523e5 100644
  		    (blk >= ext2fs_inode_table_loc(fs, group) &&
  		     (blk < ext2fs_inode_table_loc(fs, group)
 diff --git a/lib/ext2fs/alloc_tables.c b/lib/ext2fs/alloc_tables.c
-index 1c4532b..457ae18 100644
+index 1c4532b..9fbff81 100644
 --- a/lib/ext2fs/alloc_tables.c
 +++ b/lib/ext2fs/alloc_tables.c
-@@ -148,6 +148,36 @@ errcode_t ext2fs_allocate_group_table(ext2_filsys fs, dgrp_t group,
+@@ -148,12 +148,47 @@ errcode_t ext2fs_allocate_group_table(ext2_filsys fs, dgrp_t group,
  		}
  	}
  
@@ -48,7 +48,7 @@ index 1c4532b..457ae18 100644
 +		if (group && ext2fs_exclude_bitmap_loc(fs, group - 1))
 +			prev_block = ext2fs_exclude_bitmap_loc(fs, group - 1);
 +		start_blk = flexbg_offset(fs, group, prev_block, bmap,
-+						 0, rem_grps, 1);
++					  flexbg_size, rem_grps, 1);
 +		last_blk = ext2fs_group_last_block2(fs, last_grp);
 +	}
 +
@@ -74,6 +74,36 @@ index 1c4532b..457ae18 100644
  	if (flexbg_size) {
  		blk64_t prev_block = 0;
  		if (group && ext2fs_inode_bitmap_loc(fs, group - 1))
+ 			prev_block = ext2fs_inode_bitmap_loc(fs, group - 1);
+-		start_blk = flexbg_offset(fs, group, prev_block, bmap,
+-						 flexbg_size, rem_grps, 1);
++		if (EXT2_HAS_COMPAT_FEATURE(fs->super,
++				    EXT2_FEATURE_COMPAT_EXCLUDE_BITMAP))
++			start_blk = flexbg_offset(fs, group, prev_block, bmap,
++						  flexbg_size * 2, rem_grps, 1);
++		else
++			start_blk = flexbg_offset(fs, group, prev_block, bmap,
++						  flexbg_size, rem_grps, 1);
+ 		last_blk = ext2fs_group_last_block2(fs, last_grp);
+ 	}
+ 
+@@ -185,7 +220,15 @@ errcode_t ext2fs_allocate_group_table(ext2_filsys fs, dgrp_t group,
+ 			prev_block = ext2fs_inode_table_loc(fs, group - 1);
+ 		if (last_grp == fs->group_desc_count)
+ 			rem_grps = last_grp - group;
+-		group_blk = flexbg_offset(fs, group, prev_block, bmap,
++		if (EXT2_HAS_COMPAT_FEATURE(fs->super,
++				    EXT2_FEATURE_COMPAT_EXCLUDE_BITMAP))
++			group_blk = flexbg_offset(fs, group, prev_block, bmap,
++						 flexbg_size * 3,
++						 fs->inode_blocks_per_group *
++						 rem_grps,
++						 fs->inode_blocks_per_group);
++		else
++			group_blk = flexbg_offset(fs, group, prev_block, bmap,
+ 						 flexbg_size * 2,
+ 						 fs->inode_blocks_per_group *
+ 						 rem_grps,
 diff --git a/lib/ext2fs/bitmaps.c b/lib/ext2fs/bitmaps.c
 index c53d61e..b5b3f80 100644
 --- a/lib/ext2fs/bitmaps.c

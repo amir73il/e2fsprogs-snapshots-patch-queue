@@ -41,14 +41,14 @@ index 9775a98..a2a8f48 100644
   $(top_srcdir)/lib/ext2fs/ext2_fs.h $(top_builddir)/lib/ext2fs/ext2_types.h
  fsetversion.o: $(srcdir)/fsetversion.c $(srcdir)/e2p.h \
 diff --git a/lib/e2p/e2p.h b/lib/e2p/e2p.h
-index 4a68dd9..e1ca07e 100644
+index 4a68dd9..e64421b 100644
 --- a/lib/e2p/e2p.h
 +++ b/lib/e2p/e2p.h
 @@ -26,8 +26,11 @@
  /* `options' for print_flags() */
  
  #define PFOPT_LONG  1 /* Must be 1 for compatibility with `int long_format'. */
-+#define PFOPT_SNAPSHOT  2 /* list/control snapshot flags */
++#define PFOPT_SNAPSHOT  2 /* Print snapshot flags */
  
  
 +int fgetsnapflags(const char * name, unsigned long * flags);
@@ -129,10 +129,10 @@ index 0000000..c04883d
 +}
 diff --git a/lib/e2p/fsetsnapflags.c b/lib/e2p/fsetsnapflags.c
 new file mode 100644
-index 0000000..d3fcd0d
+index 0000000..4ab7e3b
 --- /dev/null
 +++ b/lib/e2p/fsetsnapflags.c
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,65 @@
 +/*
 + * fsetsnapflags.c	- Set snapshot file flags on an ext4 file system
 + *
@@ -191,6 +191,7 @@ index 0000000..d3fcd0d
 +	close(fd);
 +	if (save_errno)
 +		errno = save_errno;
++	return r;
 +#endif
 +#endif /* HAVE_EXT2_IOCTLS */
 +notsupp:

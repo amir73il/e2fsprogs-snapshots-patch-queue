@@ -1,50 +1,47 @@
-e2fsprogs: Snapshot control with chsnap/lssnap
+lssnap: List snapshot file status flags
 
 From: Amir Goldstein <amir73il@users.sf.net>
 
-Set/clear snapshots parent directory with chattr +/-x.
-Take/delete snapshot with chsnap +/-S.
-Enable/disable snapshot with chsnap +/-n.
-View snapshot status with lssnap.
+Reuse the code in lsattr and print_flags() to list snapshot file status
+flags when lsattr is invokes with prog_name lssnap.
+
+Snapshot file flags are read from kernel with new ioctl EXT2_IOC_GETSNAPFLAGS.
 
 Signed-off-by: Amir Goldstein <amir73il@users.sf.net>
 
 diff --git a/lib/e2p/Makefile.in b/lib/e2p/Makefile.in
-index 9775a98..a2a8f48 100644
+index 9775a98..576be55 100644
 --- a/lib/e2p/Makefile.in
 +++ b/lib/e2p/Makefile.in
 @@ -17,12 +17,14 @@ INSTALL = @INSTALL@
  all::	e2p.pc
  
  OBJS=		feature.o fgetflags.o fsetflags.o fgetversion.o fsetversion.o \
-+		fgetsnapflags.o fsetsnapflags.o \
++		fgetsnapflags.o \
  		getflags.o getversion.o hashstr.o iod.o ls.o mntopts.o \
  		parse_num.o pe.o pf.o ps.o setflags.o setversion.o uuid.o \
  		ostype.o percent.o
  
  SRCS=		$(srcdir)/feature.c $(srcdir)/fgetflags.c \
--		$(srcdir)/fsetflags.c $(srcdir)/fgetversion.c \
-+		$(srcdir)/fsetflags.c $(srcdir)/fgetsnapflags.c \
-+		$(srcdir)/fsetsnapflags.c $(srcdir)/fgetversion.c \
+ 		$(srcdir)/fsetflags.c $(srcdir)/fgetversion.c \
++		$(srcdir)/fgetsnapflags.c \
  		$(srcdir)/fsetversion.c $(srcdir)/getflags.c \
  		$(srcdir)/getversion.c $(srcdir)/hashstr.c $(srcdir)/iod.c \
  		$(srcdir)/ls.c $(srcdir)/mntopts.c $(srcdir)/parse_num.c \
-@@ -128,6 +130,10 @@ fgetflags.o: $(srcdir)/fgetflags.c $(srcdir)/e2p.h \
+@@ -128,6 +130,8 @@ fgetflags.o: $(srcdir)/fgetflags.c $(srcdir)/e2p.h \
   $(top_srcdir)/lib/ext2fs/ext2_fs.h $(top_builddir)/lib/ext2fs/ext2_types.h
  fsetflags.o: $(srcdir)/fsetflags.c $(srcdir)/e2p.h \
   $(top_srcdir)/lib/ext2fs/ext2_fs.h $(top_builddir)/lib/ext2fs/ext2_types.h
 +fgetsnapflags.o: $(srcdir)/fgetsnapflags.c $(srcdir)/e2p.h \
 + $(top_srcdir)/lib/ext2fs/ext2_fs.h $(top_builddir)/lib/ext2fs/ext2_types.h
-+fsetsnapflags.o: $(srcdir)/fsetsnapflags.c $(srcdir)/e2p.h \
-+ $(top_srcdir)/lib/ext2fs/ext2_fs.h $(top_builddir)/lib/ext2fs/ext2_types.h
  fgetversion.o: $(srcdir)/fgetversion.c $(srcdir)/e2p.h \
   $(top_srcdir)/lib/ext2fs/ext2_fs.h $(top_builddir)/lib/ext2fs/ext2_types.h
  fsetversion.o: $(srcdir)/fsetversion.c $(srcdir)/e2p.h \
 diff --git a/lib/e2p/e2p.h b/lib/e2p/e2p.h
-index 4a68dd9..e64421b 100644
+index 4a68dd9..0dda09f 100644
 --- a/lib/e2p/e2p.h
 +++ b/lib/e2p/e2p.h
-@@ -26,8 +26,11 @@
+@@ -26,8 +26,10 @@
  /* `options' for print_flags() */
  
  #define PFOPT_LONG  1 /* Must be 1 for compatibility with `int long_format'. */
@@ -52,7 +49,6 @@ index 4a68dd9..e64421b 100644
  
  
 +int fgetsnapflags(const char * name, unsigned long * flags);
-+int fsetsnapflags(const char * name, unsigned long flags);
  int fgetflags (const char * name, unsigned long * flags);
  int fgetversion (const char * name, unsigned long * version);
  int fsetflags (const char * name, unsigned long flags);
@@ -127,77 +123,6 @@ index 0000000..c04883d
 +	errno = EOPNOTSUPP;
 +	return -1;
 +}
-diff --git a/lib/e2p/fsetsnapflags.c b/lib/e2p/fsetsnapflags.c
-new file mode 100644
-index 0000000..4ab7e3b
---- /dev/null
-+++ b/lib/e2p/fsetsnapflags.c
-@@ -0,0 +1,65 @@
-+/*
-+ * fsetsnapflags.c	- Set snapshot file flags on an ext4 file system
-+ *
-+ * from fsetflags.c
-+ *
-+ * Copyright (C) 1993, 1994  Remy Card <card@masi.ibp.fr>
-+ *                           Laboratoire MASI, Institut Blaise Pascal
-+ *                           Universite Pierre et Marie Curie (Paris VI)
-+ *
-+ * %Begin-Header%
-+ * This file may be redistributed under the terms of the GNU Library
-+ * General Public License, version 2.
-+ * %End-Header%
-+ */
-+
-+#define _LARGEFILE_SOURCE
-+#define _LARGEFILE64_SOURCE
-+
-+#if HAVE_ERRNO_H
-+#include <errno.h>
-+#endif
-+#if HAVE_UNISTD_H
-+#include <unistd.h>
-+#endif
-+#include <sys/types.h>
-+#include <sys/stat.h>
-+#if HAVE_EXT2_IOCTLS
-+#include <fcntl.h>
-+#include <sys/ioctl.h>
-+#endif
-+
-+#include "e2p.h"
-+
-+#ifdef O_LARGEFILE
-+#define OPEN_FLAGS (O_RDONLY|O_NONBLOCK|O_LARGEFILE)
-+#else
-+#define OPEN_FLAGS (O_RDONLY|O_NONBLOCK)
-+#endif
-+
-+int fsetsnapflags(const char * name, unsigned long flags)
-+{
-+	struct stat buf;
-+#if HAVE_EXT2_IOCTLS
-+#if !APPLE_DARWIN
-+	int fd, r, f, save_errno = 0;
-+
-+	if (!lstat(name, &buf) && !S_ISREG(buf.st_mode))
-+		goto notsupp;
-+	fd = open(name, OPEN_FLAGS);
-+	if (fd == -1)
-+		return -1;
-+	f = (int) flags;
-+	r = ioctl(fd, EXT2_IOC_SETSNAPFLAGS, &f);
-+	if (r == -1)
-+		save_errno = errno;
-+	close(fd);
-+	if (save_errno)
-+		errno = save_errno;
-+	return r;
-+#endif
-+#endif /* HAVE_EXT2_IOCTLS */
-+notsupp:
-+	errno = EOPNOTSUPP;
-+	return -1;
-+}
 diff --git a/lib/e2p/pf.c b/lib/e2p/pf.c
 index f34a5cc..e713460 100644
 --- a/lib/e2p/pf.c
@@ -237,15 +162,14 @@ index f34a5cc..e713460 100644
  			if (long_opt) {
  				if (first)
 diff --git a/lib/ext2fs/ext2_fs.h b/lib/ext2fs/ext2_fs.h
-index f7ebe09..63637fd 100644
+index f7ebe09..614f284 100644
 --- a/lib/ext2fs/ext2_fs.h
 +++ b/lib/ext2fs/ext2_fs.h
-@@ -326,6 +326,26 @@ struct ext4_new_group_input {
+@@ -326,6 +326,25 @@ struct ext4_new_group_input {
  #define EXT2_IOC_GROUP_EXTEND		_IOW('f', 7, unsigned long)
  #define EXT2_IOC_GROUP_ADD		_IOW('f', 8,struct ext2_new_group_input)
  #define EXT4_IOC_GROUP_ADD		_IOW('f', 8,struct ext4_new_group_input)
 +#define EXT2_IOC_GETSNAPFLAGS		_IOR('f', 13, long)
-+#define EXT2_IOC_SETSNAPFLAGS		_IOW('f', 14, long)
 +
 +/*
 + * Snapshot status/control flags for lssnap/chsnap.
@@ -267,117 +191,28 @@ index f7ebe09..63637fd 100644
  
  /*
   * Structure of an inode on the disk
-diff --git a/misc/chattr.c b/misc/chattr.c
-index de33b08..ab06d44 100644
---- a/misc/chattr.c
-+++ b/misc/chattr.c
-@@ -56,6 +56,8 @@
- 
- static const char * program_name = "chattr";
- 
-+static int chsnap;
-+
- static int add;
- static int rem;
- static int set;
-@@ -81,6 +83,12 @@ static unsigned long sf;
- 
- static void usage(void)
- {
-+	if (chsnap) {
-+		fprintf(stderr,
-+			_("Usage: %s [-+=Sn] snapshot files...\n"),
-+			program_name);
-+		exit(1);
-+	}
- 	fprintf(stderr,
- 		_("Usage: %s [-RVf] [-+=AacDdeijsSu] [-v version] files...\n"),
- 		program_name);
-@@ -92,7 +100,7 @@ struct flags_char {
- 	char 		optchar;
- };
- 
--static const struct flags_char flags_array[] = {
-+static const struct flags_char ext2_flags_array[] = {
- 	{ EXT2_NOATIME_FL, 'A' },
- 	{ EXT2_SYNC_FL, 'S' },
- 	{ EXT2_DIRSYNC_FL, 'D' },
-@@ -106,6 +114,16 @@ static const struct flags_char flags_array[] = {
- 	{ EXT2_UNRM_FL, 'u' },
- 	{ EXT2_NOTAIL_FL, 't' },
- 	{ EXT2_TOPDIR_FL, 'T' },
-+	{ EXT4_SNAPFILE_FL, 'x' },
-+	{ 0, 0 }
-+};
-+
-+static const struct flags_char *flags_array = ext2_flags_array;
-+
-+/* Snapshot dynamic state flags */
-+static struct flags_char snapshot_flags_array[] = {
-+	{ 1UL<<EXT4_SNAPSHOT_LIST, 'S' },
-+	{ 1UL<<EXT4_SNAPSHOT_ENABLED, 'n' },
- 	{ 0, 0 }
- };
- 
-@@ -193,6 +211,7 @@ static int change_attributes(const char * name)
- 	unsigned long flags;
- 	STRUCT_STAT	st;
- 	int extent_file = 0;
-+	int ret;
- 
- 	if (LSTAT (name, &st) == -1) {
- 		if (!silent)
-@@ -201,7 +220,11 @@ static int change_attributes(const char * name)
- 		return -1;
- 	}
- 
--	if (fgetflags(name, &flags) == -1) {
-+	if (chsnap)
-+		ret = fgetsnapflags (name, &flags);
-+	else
-+		ret = fgetflags (name, &flags);
-+	if (ret == -1) {
- 		if (!silent)
- 			com_err(program_name, errno,
- 					_("while reading flags on %s"), name);
-@@ -222,7 +245,11 @@ static int change_attributes(const char * name)
- 			print_flags (stdout, sf, 0);
- 			printf ("\n");
- 		}
--		if (fsetflags (name, sf) == -1)
-+		if (chsnap)
-+			ret = fsetsnapflags (name, sf);
-+		else
-+			ret = fsetflags (name, sf);
-+		if (ret == -1)
- 			perror (name);
- 	} else {
- 		if (rem)
-@@ -243,7 +270,11 @@ static int change_attributes(const char * name)
- 		}
- 		if (!S_ISDIR(st.st_mode))
- 			flags &= ~EXT2_DIRSYNC_FL;
--		if (fsetflags(name, flags) == -1) {
-+		if (chsnap)
-+			ret = fsetsnapflags (name, flags);
-+		else
-+			ret = fsetflags (name, flags);
-+		if (ret == -1) {
- 			if (!silent) {
- 				com_err(program_name, errno,
- 						_("while setting flags on %s"),
-@@ -303,6 +334,11 @@ int main (int argc, char ** argv)
- #endif
- 	if (argc && *argv)
- 		program_name = *argv;
-+	i = strlen(program_name);
-+	if (i >= 6 && !strcmp(program_name + i - 6, "chsnap")) {
-+		flags_array = snapshot_flags_array;
-+		chsnap = 1;
-+	}
- 	i = 1;
- 	while (i < argc && !end_arg) {
- 		/* '--' arg should end option processing */
+diff --git a/misc/Makefile.in b/misc/Makefile.in
+index 86ee53f..333237e 100644
+--- a/misc/Makefile.in
++++ b/misc/Makefile.in
+@@ -441,6 +441,8 @@ install: all $(SMANPAGES) $(UMANPAGES) installdirs
+ 		echo "	INSTALL $(libdir)/$$i"; \
+ 		$(INSTALL_PROGRAM) $$i $(DESTDIR)$(libdir)/$$i; \
+ 	done
++	$(Q) $(INSTALL_PROGRAM) lsattr \
++		$(DESTDIR)$(root_sbindir)/lssnap
+ 	$(Q) for i in $(SMANPAGES); do \
+ 		for j in $(COMPRESS_EXT); do \
+ 			$(RM) -f $(DESTDIR)$(man8dir)/$$i.$$j; \
+@@ -535,7 +537,7 @@ uninstall:
+ 	for i in $(UMANPAGES); do \
+ 		$(RM) -f $(DESTDIR)$(man1dir)/$$i; \
+ 	done
+-	for i in $(FINDFS_LINK) e2label ; do \
++	for i in $(FINDFS_LINK) e2label lssnap ; do \
+ 		$(RM) -f $(DESTDIR)$(root_sbindir)/$$i; \
+ 	done
+ 	for i in $(FMANPAGES); do \
 diff --git a/misc/lsattr.c b/misc/lsattr.c
 index 15b17ad..c465e49 100644
 --- a/misc/lsattr.c

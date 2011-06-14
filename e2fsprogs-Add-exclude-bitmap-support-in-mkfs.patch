@@ -34,17 +34,39 @@ index 3a8f332..6c523e5 100644
  		    (blk >= ext2fs_inode_table_loc(fs, group) &&
  		     (blk < ext2fs_inode_table_loc(fs, group)
 diff --git a/lib/ext2fs/alloc_tables.c b/lib/ext2fs/alloc_tables.c
-index 1c4532b..9fbff81 100644
+index 1c4532b..9dc71f2 100644
 --- a/lib/ext2fs/alloc_tables.c
 +++ b/lib/ext2fs/alloc_tables.c
-@@ -148,12 +148,47 @@ errcode_t ext2fs_allocate_group_table(ext2_filsys fs, dgrp_t group,
- 		}
+@@ -85,7 +85,7 @@ errcode_t ext2fs_allocate_group_table(ext2_filsys fs, dgrp_t group,
+ 	errcode_t	retval;
+ 	blk64_t		group_blk, start_blk, last_blk, new_blk, blk;
+ 	dgrp_t		last_grp = 0;
+-	int		j, rem_grps = 0, flexbg_size = 0;
++	int		j, rem_grps = 0, flexbg_size = 0, exclude_bitmap = 0;
+ 
+ 	group_blk = ext2fs_group_first_block2(fs, group);
+ 	last_blk = ext2fs_group_last_block2(fs, group);
+@@ -103,8 +103,12 @@ errcode_t ext2fs_allocate_group_table(ext2_filsys fs, dgrp_t group,
+ 			last_grp = fs->group_desc_count;
  	}
  
 +	if (EXT2_HAS_COMPAT_FEATURE(fs->super,
-+				    EXT2_FEATURE_COMPAT_EXCLUDE_BITMAP) &&
-+	    flexbg_size) {
-+		blk_t prev_block = 0;
++				    EXT2_FEATURE_COMPAT_EXCLUDE_BITMAP))
++		exclude_bitmap = 1;
++
+ 	/*
+-	 * Allocate the block and inode bitmaps, if necessary
++	 * Allocate the block, exclude and inode bitmaps, if necessary
+ 	 */
+ 	if (fs->stride) {
+ 		retval = ext2fs_get_free_blocks2(fs, group_blk, last_blk,
+@@ -148,12 +152,41 @@ errcode_t ext2fs_allocate_group_table(ext2_filsys fs, dgrp_t group,
+ 		}
+ 	}
+ 
++	if (exclude_bitmap && flexbg_size) {
++		blk64_t prev_block = 0;
++
 +		if (group && ext2fs_exclude_bitmap_loc(fs, group - 1))
 +			prev_block = ext2fs_exclude_bitmap_loc(fs, group - 1);
 +		start_blk = flexbg_offset(fs, group, prev_block, bmap,
@@ -52,10 +74,7 @@ index 1c4532b..9fbff81 100644
 +		last_blk = ext2fs_group_last_block2(fs, last_grp);
 +	}
 +
-+	if (EXT2_HAS_COMPAT_FEATURE(fs->super,
-+				    EXT2_FEATURE_COMPAT_EXCLUDE_BITMAP) &&
-+	    !ext2fs_exclude_bitmap_loc(fs, group)) {
-+		dgrp_t gr; 
++	if (exclude_bitmap && !ext2fs_exclude_bitmap_loc(fs, group)) {
 +		retval = ext2fs_get_free_blocks2(fs, start_blk, last_blk,
 +						1, bmap, &new_blk);
 +		if (retval == EXT2_ET_BLOCK_ALLOC_FAIL)
@@ -65,45 +84,40 @@ index 1c4532b..9fbff81 100644
 +			return retval;
 +		ext2fs_mark_block_bitmap2(bmap, new_blk);
 +		ext2fs_exclude_bitmap_loc_set(fs, group, new_blk);
-+		gr = ext2fs_group_of_blk2(fs, new_blk);
-+		ext2fs_bg_free_blocks_count_set(fs, gr, ext2fs_bg_free_blocks_count(fs, gr) - 1);
-+		ext2fs_free_blocks_count_add(fs->super, -1);
-+		ext2fs_group_desc_csum_set(fs, gr);
++		if (flexbg_size) {
++			dgrp_t gr = ext2fs_group_of_blk2(fs, new_blk);
++			ext2fs_bg_free_blocks_count_set(fs, gr, ext2fs_bg_free_blocks_count(fs, gr) - 1);
++			ext2fs_free_blocks_count_add(fs->super, -1);
++			ext2fs_bg_flags_clear(fs, gr, EXT2_BG_BLOCK_UNINIT);
++			ext2fs_group_desc_csum_set(fs, gr);
++		}
 +	}
 +
  	if (flexbg_size) {
  		blk64_t prev_block = 0;
  		if (group && ext2fs_inode_bitmap_loc(fs, group - 1))
  			prev_block = ext2fs_inode_bitmap_loc(fs, group - 1);
--		start_blk = flexbg_offset(fs, group, prev_block, bmap,
+ 		start_blk = flexbg_offset(fs, group, prev_block, bmap,
 -						 flexbg_size, rem_grps, 1);
-+		if (EXT2_HAS_COMPAT_FEATURE(fs->super,
-+				    EXT2_FEATURE_COMPAT_EXCLUDE_BITMAP))
-+			start_blk = flexbg_offset(fs, group, prev_block, bmap,
-+						  flexbg_size * 2, rem_grps, 1);
-+		else
-+			start_blk = flexbg_offset(fs, group, prev_block, bmap,
-+						  flexbg_size, rem_grps, 1);
++					  flexbg_size * (1 + exclude_bitmap), rem_grps, 1);
  		last_blk = ext2fs_group_last_block2(fs, last_grp);
  	}
  
-@@ -185,7 +220,15 @@ errcode_t ext2fs_allocate_group_table(ext2_filsys fs, dgrp_t group,
- 			prev_block = ext2fs_inode_table_loc(fs, group - 1);
+@@ -186,10 +219,10 @@ errcode_t ext2fs_allocate_group_table(ext2_filsys fs, dgrp_t group,
  		if (last_grp == fs->group_desc_count)
  			rem_grps = last_grp - group;
--		group_blk = flexbg_offset(fs, group, prev_block, bmap,
-+		if (EXT2_HAS_COMPAT_FEATURE(fs->super,
-+				    EXT2_FEATURE_COMPAT_EXCLUDE_BITMAP))
-+			group_blk = flexbg_offset(fs, group, prev_block, bmap,
-+						 flexbg_size * 3,
-+						 fs->inode_blocks_per_group *
-+						 rem_grps,
-+						 fs->inode_blocks_per_group);
-+		else
-+			group_blk = flexbg_offset(fs, group, prev_block, bmap,
- 						 flexbg_size * 2,
- 						 fs->inode_blocks_per_group *
- 						 rem_grps,
+ 		group_blk = flexbg_offset(fs, group, prev_block, bmap,
+-						 flexbg_size * 2,
+-						 fs->inode_blocks_per_group *
+-						 rem_grps,
+-						 fs->inode_blocks_per_group);
++					  flexbg_size * (2 + exclude_bitmap),
++					  fs->inode_blocks_per_group *
++					  rem_grps,
++					  fs->inode_blocks_per_group);
+ 		last_blk = ext2fs_group_last_block2(fs, last_grp);
+ 	}
+ 
 diff --git a/lib/ext2fs/bitmaps.c b/lib/ext2fs/bitmaps.c
 index c53d61e..eade6fa 100644
 --- a/lib/ext2fs/bitmaps.c
@@ -286,7 +300,7 @@ index f0aa098..aa4d132 100644
  
  #define EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER	0x0001
 diff --git a/lib/ext2fs/ext2fs.h b/lib/ext2fs/ext2fs.h
-index 3d69c55..0dc46de 100644
+index 3d69c55..5953274 100644
 --- a/lib/ext2fs/ext2fs.h
 +++ b/lib/ext2fs/ext2fs.h
 @@ -109,6 +109,7 @@ typedef struct struct_ext2_filsys *ext2_filsys;
@@ -315,7 +329,17 @@ index 3d69c55..0dc46de 100644
  	/* XXX FIXME-64: not 64-bit safe, but not used? */
  	errcode_t (*get_blocks)(ext2_filsys fs, ext2_ino_t ino, blk_t *blocks);
  	errcode_t (*check_directory)(ext2_filsys fs, ext2_ino_t ino);
-@@ -1525,9 +1526,11 @@ _INLINE_ void ext2fs_mark_bb_dirty(ext2_filsys fs)
+@@ -769,6 +770,9 @@ extern struct ext2_group_desc *ext2fs_group_desc(ext2_filsys fs,
+ extern blk64_t ext2fs_block_bitmap_loc(ext2_filsys fs, dgrp_t group);
+ extern void ext2fs_block_bitmap_loc_set(ext2_filsys fs, dgrp_t group,
+ 					blk64_t blk);
++extern blk64_t ext2fs_exclude_bitmap_loc(ext2_filsys fs, dgrp_t group);
++extern void ext2fs_block_exclude_loc_set(ext2_filsys fs, dgrp_t group,
++					blk64_t blk);
+ extern blk64_t ext2fs_inode_bitmap_loc(ext2_filsys fs, dgrp_t group);
+ extern void ext2fs_inode_bitmap_loc_set(ext2_filsys fs, dgrp_t group,
+ 					blk64_t blk);
+@@ -1525,9 +1529,11 @@ _INLINE_ void ext2fs_mark_bb_dirty(ext2_filsys fs)
  /*
   * Mark the exclude bitmap as dirty
   */
@@ -329,7 +353,7 @@ index 3d69c55..0dc46de 100644
  }
  
  /*
-@@ -1549,9 +1552,9 @@ _INLINE_ int ext2fs_test_bb_dirty(ext2_filsys fs)
+@@ -1549,9 +1555,9 @@ _INLINE_ int ext2fs_test_bb_dirty(ext2_filsys fs)
  /*
   * Check to see if a filesystem's exclude bitmap is dirty
   */

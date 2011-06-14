@@ -27,7 +27,7 @@ index 9b6c985..39743b8 100644
  	modify_inode, mi;
  
 diff --git a/debugfs/debugfs.c b/debugfs/debugfs.c
-index e441bc5..5bc9e11 100644
+index e441bc5..f8c2b5d 100644
 --- a/debugfs/debugfs.c
 +++ b/debugfs/debugfs.c
 @@ -95,6 +95,11 @@ static void open_filesystem(char *device, int open_flags, blk64_t superblock,
@@ -46,7 +46,7 @@ index e441bc5..5bc9e11 100644
  					      EXT4_FEATURE_RO_COMPAT_GDT_CSUM);
  	for (i = 0; i < current_fs->group_desc_count; i++) {
  		fprintf(out, " Group %2d: block bitmap at %llu, "
-+			"exlcude bitmap at %u, "
++			"exlcude bitmap at %llu, "
  		        "inode bitmap at %llu, "
  		        "inode table at %llu\n"
  		        "           %u free %s, "

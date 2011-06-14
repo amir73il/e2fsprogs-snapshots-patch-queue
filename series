@@ -16,3 +16,4 @@ e2fsprogs-Add-exclude-bitmap-support-in-tune2fs.patch
 e2fsprogs-Add-exclude-bitmap-support-in-e2image.patch
 e2fsprogs-Add-exclude-bitmap-support-in-debugfs.patch
 e2fsprogs-Add-exclude-bitmap-support-in-ext2ed.patch
+e4snapshot_script.patch

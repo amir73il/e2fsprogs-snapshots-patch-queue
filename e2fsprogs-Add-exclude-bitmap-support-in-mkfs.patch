@@ -455,7 +455,7 @@ index 3650013..ed97f95 100644
 +				      bitmap->bitmap);
 +}
 diff --git a/lib/ext2fs/gen_bitmap64.c b/lib/ext2fs/gen_bitmap64.c
-index df095ac..b0f9fc2 100644
+index 69c399a..49be305 100644
 --- a/lib/ext2fs/gen_bitmap64.c
 +++ b/lib/ext2fs/gen_bitmap64.c
 @@ -114,6 +114,9 @@ errcode_t ext2fs_alloc_generic_bmap(ext2_filsys fs, errcode_t magic,
@@ -680,19 +680,25 @@ index 1f37a48..736027f 100644
  	if (!do_inode && !do_block && !do_exclude)
  		return 0;
 diff --git a/lib/ext2fs/swapfs.c b/lib/ext2fs/swapfs.c
-index 3a43c6c..6a36cb5 100644
+index 3a43c6c..1c7b74c 100644
 --- a/lib/ext2fs/swapfs.c
 +++ b/lib/ext2fs/swapfs.c
-@@ -100,6 +100,9 @@ void ext2fs_swap_group_desc2(ext2_filsys fs, struct ext2_group_desc *gdp)
+@@ -100,6 +100,7 @@ void ext2fs_swap_group_desc2(ext2_filsys fs, struct ext2_group_desc *gdp)
  {
  	/* Do the 32-bit parts first */
  	gdp->bg_block_bitmap = ext2fs_swab32(gdp->bg_block_bitmap);
-+	if (EXT2_HAS_COMPAT_FEATURE(fs->super,
-+				    EXT4_FEATURE_COMPAT_EXCLUDE_BITMAP))
-+		gdp->bg_exlcude_bitmap = ext2fs_swab32(gdp->bg_exclude_bitmap);
++	gdp->bg_exclude_bitmap = ext2fs_swab32(gdp->bg_exclude_bitmap);
  	gdp->bg_inode_bitmap = ext2fs_swab32(gdp->bg_inode_bitmap);
  	gdp->bg_inode_table = ext2fs_swab32(gdp->bg_inode_table);
  	gdp->bg_free_blocks_count = ext2fs_swab16(gdp->bg_free_blocks_count);
+@@ -116,6 +117,7 @@ void ext2fs_swap_group_desc2(ext2_filsys fs, struct ext2_group_desc *gdp)
+ 	/* Swap the 64-bit parts */
+ 	struct ext4_group_desc *gdp4 = (struct ext4_group_desc *) gdp;
+ 	gdp4->bg_block_bitmap_hi = ext2fs_swab32(gdp4->bg_block_bitmap_hi);
++	gdp4->bg_exclude_bitmap_hi = ext2fs_swab32(gdp4->bg_exclude_bitmap_hi);
+ 	gdp4->bg_inode_bitmap_hi = ext2fs_swab32(gdp4->bg_inode_bitmap_hi);
+ 	gdp4->bg_inode_table_hi = ext2fs_swab32(gdp4->bg_inode_table_hi);
+ 	gdp4->bg_free_blocks_count_hi =
 diff --git a/misc/mke2fs.c b/misc/mke2fs.c
 index a32361c..28da7f0 100644
 --- a/misc/mke2fs.c

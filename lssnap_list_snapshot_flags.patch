@@ -192,10 +192,30 @@ index f7ebe09..614f284 100644
  /*
   * Structure of an inode on the disk
 diff --git a/misc/Makefile.in b/misc/Makefile.in
-index 86ee53f..333237e 100644
+index 86ee53f..8e48a57 100644
 --- a/misc/Makefile.in
 +++ b/misc/Makefile.in
-@@ -441,6 +441,8 @@ install: all $(SMANPAGES) $(UMANPAGES) installdirs
+@@ -36,7 +36,7 @@ SMANPAGES=	tune2fs.8 mklost+found.8 mke2fs.8 dumpe2fs.8 badblocks.8 \
+ FMANPAGES=	mke2fs.conf.5
+ 
+ UPROGS=		chattr lsattr @UUID_CMT@ uuidgen
+-UMANPAGES=	chattr.1 lsattr.1 @UUID_CMT@ uuidgen.1
++UMANPAGES=	chattr.1 lsattr.1 lssnap.1 @UUID_CMT@ uuidgen.1
+ 
+ LPROGS=		@E2INITRD_PROG@
+ 
+@@ -388,6 +388,10 @@ lsattr.1: $(DEP_SUBSTITUTE) $(srcdir)/lsattr.1.in
+ 	$(E) "	SUBST $@"
+ 	$(Q) $(SUBSTITUTE_UPTIME) $(srcdir)/lsattr.1.in lsattr.1 
+ 
++lssnap.1: $(DEP_SUBSTITUTE) $(srcdir)/lssnap.1.in 
++	$(E) "	SUBST $@"
++	$(Q) $(SUBSTITUTE_UPTIME) $(srcdir)/lssnap.1.in lssnap.1 
++
+ uuidgen.1: $(DEP_SUBSTITUTE) $(srcdir)/uuidgen.1.in 
+ 	$(E) "	SUBST $@"
+ 	$(Q) $(SUBSTITUTE_UPTIME) $(srcdir)/uuidgen.1.in uuidgen.1 
+@@ -441,6 +445,8 @@ install: all $(SMANPAGES) $(UMANPAGES) installdirs
  		echo "	INSTALL $(libdir)/$$i"; \
  		$(INSTALL_PROGRAM) $$i $(DESTDIR)$(libdir)/$$i; \
  	done
@@ -204,7 +224,7 @@ index 86ee53f..333237e 100644
  	$(Q) for i in $(SMANPAGES); do \
  		for j in $(COMPRESS_EXT); do \
  			$(RM) -f $(DESTDIR)$(man8dir)/$$i.$$j; \
-@@ -535,7 +537,7 @@ uninstall:
+@@ -535,7 +541,7 @@ uninstall:
  	for i in $(UMANPAGES); do \
  		$(RM) -f $(DESTDIR)$(man1dir)/$$i; \
  	done
@@ -252,3 +272,58 @@ index 15b17ad..c465e49 100644
  				break;
  			case 'v':
  				generation_opt = 1;
+diff --git a/misc/lssnap.1.in b/misc/lssnap.1.in
+new file mode 100644
+index 0000000..73fcb65
+--- /dev/null
++++ b/misc/lssnap.1.in
+@@ -0,0 +1,49 @@
++.\" -*- nroff -*-
++.TH LSSNAP 1 "@E2FSPROGS_MONTH@ @E2FSPROGS_YEAR@" "E2fsprogs version @E2FSPROGS_VERSION@"
++.SH NAME
++lssnap \- list snapshot file attributes on a Linux fourth extended file system
++.SH SYNOPSIS
++.B lssnap
++[
++.B \-RVadv
++]
++[
++.I files...
++]
++.SH DESCRIPTION
++.B lssnap
++lists the snapshot file attributes on a fourth extended file system.  See
++.BR chsnap (1)
++for a description of the snapshot file attributes and what they mean.
++.SH OPTIONS
++.TP
++.B \-R
++Recursively list attributes of snapshot directories and their contents.
++.TP
++.B \-V
++Display the program version.
++.TP
++.B \-a
++List all snapshot files in directories, including files that start with `.'.
++.TP
++.B \-d
++List directories like other files, rather than listing their contents.
++.TP
++.B \-v
++List the snapshot file's version/generation number.
++.SH AUTHOR
++.B lssnap
++was copied from
++.B lsattr
++by Amir Goldstein <amir73il@users.sf.net>.
++.B lsattr
++was written by Remy Card <Remy.Card@linux.org>.  It is currently being
++maintained by Theodore Ts'o <tytso@alum.mit.edu>.
++.SH BUGS
++There are none :-).
++.SH AVAILABILITY
++.B lssnap
++is part of the e2fsprogs package and is available from
++http://e2fsprogs.sourceforge.net.
++.SH SEE ALSO
++.BR chsnap (1)

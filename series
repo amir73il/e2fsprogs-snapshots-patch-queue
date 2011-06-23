@@ -7,7 +7,7 @@ tune2fs_discard_snapshot_list.patch
 lssnap_list_snapshot_flags.patch
 chsnap_control_snapshot_flags.patch
 e2fsck_check_snapshot_list.patch
-e2fsck_discard_all_snapshots.patch
+e2fsck_clear_all_snapshots.patch
 e2fsprogs_16TB_snapshot_file.patch
 e2fsck_dump_message_buffer.patch
 e2fsprogs-Add-exclude-bitmap-support-in-mkfs.patch

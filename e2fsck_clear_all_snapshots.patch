@@ -1,21 +1,51 @@
-e2fsck: Discard all snapshots
+e2fsck: Clear all snapshots
 
 From: Amir Goldstein <amir73il@users.sf.net>
 
-On e2fsck -x or if the 'fix_snapshot' flag is set, prompt to discard
+On e2fsck -x or if the 'fix_snapshot' flag is set, prompt to clear
 all snapshot inodes and reset exclude bitmap.
 
 Signed-off-by: Amir Goldstein <amir73il@users.sf.net>
 
+diff --git a/e2fsck/e2fsck.8.in b/e2fsck/e2fsck.8.in
+index 178eecf..b7d623a 100644
+--- a/e2fsck/e2fsck.8.in
++++ b/e2fsck/e2fsck.8.in
+@@ -8,7 +8,7 @@ e2fsck \- check a Linux ext2/ext3/ext4 file system
+ .SH SYNOPSIS
+ .B e2fsck
+ [
+-.B \-pacnyrdfkvtDFV
++.B \-pacnyrdfkvtxDFV
+ ]
+ [
+ .B \-b
+@@ -311,6 +311,16 @@ may not be specified at the same time as the
+ or
+ .B \-p
+ options.
++.TP
++.B \-x
++Delete all snapshots before repairing the filesystem.  Unless
++.B e2fsck
++is run in preen mode, it may modify the filesystem in a way that will
++corrupt ext4 snapshots. So when ext4 snapshots exists and the filesystem
++could not be repaired in preen mode, using this option is recommended.
++This option may not be specified at the same time as the 
++.B \-n
++option.
+ .SH EXIT CODE
+ The exit code returned by
+ .B e2fsck
 diff --git a/e2fsck/e2fsck.h b/e2fsck/e2fsck.h
-index 02d6cd2..fa08f80 100644
+index 02d6cd2..91f98e9 100644
 --- a/e2fsck/e2fsck.h
 +++ b/e2fsck/e2fsck.h
 @@ -157,6 +157,7 @@ struct resource_track {
  #define E2F_OPT_FRAGCHECK	0x0800
  #define E2F_OPT_JOURNAL_ONLY	0x1000 /* only replay the journal */
  #define E2F_OPT_DISCARD		0x2000
-+#define E2F_OPT_FIX_SNAPSHOT	0x4000
++#define E2F_OPT_CLEAR_SNAPSHOTS	0x4000 /* Delete all snapshots */
  
  /*
   * E2fsck flags
@@ -46,54 +76,76 @@ index cd3de39..d90196c 100644
                       EXT3_FEATURE_INCOMPAT_EXTENTS);
  
 diff --git a/e2fsck/problem.c b/e2fsck/problem.c
-index 693f41f..5194e2d 100644
+index 83cb0a8..1d1b355 100644
 --- a/e2fsck/problem.c
 +++ b/e2fsck/problem.c
-@@ -41,6 +41,7 @@
+@@ -41,7 +41,8 @@
  #define PROMPT_CLEAR_HTREE 18
  #define PROMPT_RECREATE 19
  #define PROMPT_TERMINATE_LIST 20
-+#define PROMPT_DISCARD_SNAPSHOTS 21
- #define PROMPT_NULL	22
+-#define PROMPT_NULL	21
++#define PROMPT_CLEAR_SNAPSHOTS 21
++#define PROMPT_NULL	22
  
  /*
-@@ -69,6 +70,7 @@ static const char *prompt[] = {
+  * These are the prompts which are used to ask the user if they want
+@@ -69,7 +70,8 @@ static const char *prompt[] = {
  	N_("Clear HTree index"),/* 18 */
  	N_("Recreate"),		/* 19 */
  	N_("Terminate list"),	/* 20 */
-+	N_("Discard snapshots"),/* 21 */
- 	"",			/* 22 */
+-	"",			/* 21 */
++	N_("Clear all snapshots"),	/* 21 */
++	"",			/* 22 */
  };
  
-@@ -339,6 +341,12 @@ static struct e2fsck_problem problem_table[] = {
+ /*
+@@ -98,7 +100,8 @@ static const char *preen_msg[] = {
+ 	N_("HTREE INDEX CLEARED"),/* 18 */
+ 	N_("WILL RECREATE"),	/* 19 */
+ 	N_("LIST TERMINATED"),	/* 20 */
+-	"",			/* 21 */
++	N_("SNAPSHOTS CLEARED"),	/* 21 */
++	"",			/* 22 */
+ };
+ 
+ static struct e2fsck_problem problem_table[] = {
+@@ -339,6 +342,17 @@ static struct e2fsck_problem problem_table[] = {
+ 	{ PR_0_BAD_SNAPSHOT_LIST,
  	  N_("Bad @i found on snapshot list.  "),
  	  PROMPT_TERMINATE_LIST, PR_PREEN_OK },
- 
++ 
 +	/* Corrupted snapshot */
-+	{ PR_0_FIX_SNAPSHOT,
++	{ PR_0_BAD_SNAPSHOT,
 +	  N_("@f may contain corrupted snapshots.\n"
 +	     "This version of e2fsck does not support fixing snapshots.\n"),
-+	  PROMPT_DISCARD_SNAPSHOTS, 0 },
++	  PROMPT_CLEAR_SNAPSHOTS, 0 },
 +
++	/* Clearing all snapshot */
++	{ PR_0_CLEAR_SNAPSHOTS,
++	  N_("Snapshots may be damaged by repair.  "),
++	  PROMPT_CLEAR_SNAPSHOTS, PR_PREEN_OK },
+ 
  	/* Last mount time is in the future */
  	{ PR_0_FUTURE_SB_LAST_MOUNT,
- 	  N_("@S last mount time (%t,\n\tnow = %T) is in the future.\n"),
 diff --git a/e2fsck/problem.h b/e2fsck/problem.h
-index d81fa16..ac058e3 100644
+index eeb3e51..1773be6 100644
 --- a/e2fsck/problem.h
 +++ b/e2fsck/problem.h
-@@ -231,6 +231,9 @@ struct problem_context {
- /* Bas snapshot on list */
- #define PR_0_BAD_SNAPSHOT			0x000102
+@@ -231,6 +231,12 @@ struct problem_context {
+ /* Corrupted snapshot list */
+ #define PR_0_BAD_SNAPSHOT_LIST			0x000102
  
 +/* Corrupted snapshot */
-+#define PR_0_FIX_SNAPSHOT			0x000103
++#define PR_0_BAD_SNAPSHOT			0x000103
++
++/* Clearing all snapshot */
++#define PR_0_CLEAR_SNAPSHOTS			0x000104
 +
  
  /*
   * Pass 1 errors
 diff --git a/e2fsck/super.c b/e2fsck/super.c
-index 18eb8ce..a1700a0 100644
+index 7680b37..1dc314e 100644
 --- a/e2fsck/super.c
 +++ b/e2fsck/super.c
 @@ -432,6 +432,34 @@ cleanup:
@@ -131,41 +183,55 @@ index 18eb8ce..a1700a0 100644
   * Check that snapshot list contains valid snapshot files.
   * Returns the number of valid snapshots on list.
   *
-@@ -513,6 +541,32 @@ void check_snapshots(e2fsck_t ctx)
+@@ -507,12 +535,45 @@ void check_snapshots(e2fsck_t ctx)
+ {
+ 	struct ext2_super_block *sb = ctx->fs->super;
+ 	struct problem_context	pctx;
+-	int cont;
++	int cont, clear_snapshots = 0;
+ 
+ 	if (!(sb->s_feature_ro_compat & EXT4_FEATURE_RO_COMPAT_HAS_SNAPSHOT))
  		/* no snapshots */
  		return;
  
-+	if ((ctx->options & E2F_OPT_FIX_SNAPSHOT) ||
-+			(sb->s_flags & EXT2_FLAGS_FIX_SNAPSHOT)) {
-+		/* corrupted snapshot need to be fixed */
-+		clear_problem_context(&pctx);
-+		if (fix_problem(ctx, PR_0_FIX_SNAPSHOT, &pctx)) {
-+			if (sb->s_snapshot_list || sb->s_snapshot_inum ||
++	clear_problem_context(&pctx);
++	if (ctx->options & E2F_OPT_CLEAR_SNAPSHOTS) {
++		/* user requested to clear snapshots */
++		if (fix_problem(ctx, PR_0_CLEAR_SNAPSHOTS, &pctx))
++			clear_snapshots = 1;
++		/* don't ask again after pass1 restart */
++		ctx->options &= ~E2F_OPT_CLEAR_SNAPSHOTS;
++	}
++	else if (sb->s_flags & EXT2_FLAGS_FIX_SNAPSHOT) {
++		/* corrupted snapshot */
++		if (fix_problem(ctx, PR_0_BAD_SNAPSHOT, &pctx))
++			clear_snapshots = 1;
++	}
++
++	if (clear_snapshots) {
++		if (sb->s_snapshot_list || sb->s_snapshot_inum ||
 +				(sb->s_flags & (EXT2_FLAGS_FIX_SNAPSHOT |
 +						EXT2_FLAGS_IS_SNAPSHOT))) {
-+				/* reset snapshot list head */
-+				sb->s_snapshot_list = sb->s_snapshot_inum = 0;
-+				sb->s_flags &= ~(EXT2_FLAGS_FIX_SNAPSHOT |
-+						 EXT2_FLAGS_IS_SNAPSHOT);
-+				ext2fs_mark_super_dirty(ctx->fs);
-+			}
-+			/* don't ask again after pass1 */
-+			ctx->options &= ~E2F_OPT_FIX_SNAPSHOT;
-+			/* clear all snapshot inodes (in pass1) */
-+			ctx->flags |= E2F_FLAG_CLEAR_SNAPSHOTS;
-+			if (sb->s_feature_compat &
-+					EXT2_FEATURE_COMPAT_EXCLUDE_BITMAP)
-+				/* and reset exclude bitmap */
-+				reset_exclude_bitmap(ctx->fs);
-+			return;
++			/* reset snapshot list head */
++			sb->s_snapshot_list = sb->s_snapshot_inum = 0;
++			sb->s_flags &= ~(EXT2_FLAGS_FIX_SNAPSHOT |
++					EXT2_FLAGS_IS_SNAPSHOT);
++			ext2fs_mark_super_dirty(ctx->fs);
 +		}
++		/* clear all snapshot inodes (in pass1) */
++		ctx->flags |= E2F_FLAG_CLEAR_SNAPSHOTS;
++		if (sb->s_feature_compat &
++				EXT2_FEATURE_COMPAT_EXCLUDE_BITMAP)
++			/* and reset exclude bitmap */
++			reset_exclude_bitmap(ctx->fs);
++		return;
 +	}
 +
  	if (!check_snapshot_list(ctx))
  		/* no valid snapshots on list */
  		return;
 diff --git a/e2fsck/unix.c b/e2fsck/unix.c
-index c4e0845..71fba66 100644
+index c4e0845..495aa06 100644
 --- a/e2fsck/unix.c
 +++ b/e2fsck/unix.c
 @@ -73,7 +73,7 @@ int journal_enable_debug = -1;
@@ -181,7 +247,7 @@ index c4e0845..71fba66 100644
  		" -j external_journal  Set location of the external journal\n"
  		" -l bad_blocks_file   Add to badblocks list\n"
  		" -L bad_blocks_file   Set badblocks list\n"
-+		" -x                   Fix or discard snapshots\n"
++		" -x                   Delete all snapshots\n"
  		));
  
  	exit(FSCK_USAGE);
@@ -199,8 +265,21 @@ index c4e0845..71fba66 100644
  			keep_bad_blocks++;
  			break;
 +		case 'x':
-+			ctx->options |= E2F_OPT_FIX_SNAPSHOT;
++			ctx->options |= E2F_OPT_CLEAR_SNAPSHOTS;
 +			break;
  		default:
  			usage(ctx);
  		}
+@@ -830,6 +834,12 @@ static errcode_t PRS(int argc, char *argv[], e2fsck_t *ret_ctx)
+ 			_("The -n and -D options are incompatible."));
+ 		fatal_error(ctx, 0);
+ 	}
++	if ((ctx->options & E2F_OPT_NO) &&
++	    (ctx->options & E2F_OPT_CLEAR_SNAPSHOTS)) {
++		com_err(ctx->program_name, 0,
++			_("The -n and -x options are incompatible."));
++		fatal_error(ctx, 0);
++	}
+ 	if ((ctx->options & E2F_OPT_NO) && cflag) {
+ 		com_err(ctx->program_name, 0,
+ 			_("The -n and -c options are incompatible."));

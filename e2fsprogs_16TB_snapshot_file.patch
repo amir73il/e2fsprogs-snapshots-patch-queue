@@ -1,11 +1,19 @@
-e2fsprogs: Map maximum filesystem size with a single snapshot file
+e2fsprogs: support for 16TB snapshot file
 
 From: Amir Goldstein <amir73il@users.sf.net>
 
+A snapshot file should be able to map all filesystem blocks, so it
+should be able to reach a logical size of 16TB with 4k block size.
+
+The number of allocated blocks are stored in the 32bit i_blocks field in
+block units, even if the huge_file feature is not set.
+
 To map 2^32 logical blocks, 4 triple indirect blocks are used instead
 of just one.  The extra 3 triple indirect blocks are stored in-place
-of direct blocks, which are not in use by snapshot files.
-Snapshots cannot be enabled on filesytem with block size < 4K.
+of the first 3 direct blocks, which are never in use by snapshot files.
+
+Snapshots cannot be enabled on filesytem with block size < 4K and for
+larger block size, 1 triple indirect block is enough to map 2^32 blocks.
 
 Signed-off-by: Amir Goldstein <amir73il@users.sf.net>
 

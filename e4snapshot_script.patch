@@ -7,7 +7,7 @@ Signed-off-by: Amir Goldstein <amir73il@users.sf.net>
 
 diff --git a/contrib/e4snapshot b/contrib/e4snapshot
 new file mode 100755
-index 0000000..b00f6c3
+index 0000000..c6cb396
 --- /dev/null
 +++ b/contrib/e4snapshot
 @@ -0,0 +1,768 @@
@@ -292,7 +292,7 @@ index 0000000..b00f6c3
 +		echo "usage: $SCRIPT_NAME mkfs [$FSTYPE-device]"
 +		exit 0
 +	fi
-+	$MKFS -b 4096 -j -J big -O has_snapshot,exclude_inode $ROOTDEV || exit 1
++	$MKFS -b 4096 -j -J big -O has_snapshot,exclude_bitmap $ROOTDEV || exit 1
 +	$TUNEFS -e remount-ro $ROOTDEV
 +	echo $FSTYPE filesystem created on $ROOTDEV
 +	echo .

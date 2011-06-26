@@ -1,0 +1,26 @@
+Patch series rearrangement:
+---------------------------
+- The first patch - libext2fs_exclude_bitmap_on-disk_format_changes.patch
+  should be split out of e2fsprogs__snapshots_on-disk_format_changes
+  and should also contain the deprecation (comment out) of
+  EXT2_FEATURE_COMPAT_EXCLUDE_INODE.
+- The second patch - libext2fs_add_exclude_bitmap_support.patch
+  should be split out of both e2fsprogs__create-check_the_exclude_bitmap
+  and e2fsprogs-Add-exclude-bitmap-support-in-mkfs.patch
+- What remains of e2fsprogs__create-check_the_exclude_bitmap, should
+  be renamed to e2fsck_check_the_exclude_bitmap and applied after
+  all other patches.
+- Exclude bitmap series should be applied before snapshots series
+  and submitted separetly.
+
+Exclude bitmap:
+---------------
+- Allocate exclude bitmap on tune2fs -O exclude_bitmap
+- Test reset_exclude_bitmap() with uninit_bg
+- Implement reset_exclude_bitmap() without uninit_bg
+- Implement new resize
+- Verify either flex_bg OR !uninit_bg when setting exclude_bitmap
+
+Snapshots:
+----------
+- Set all snapshot related options on mke2fs -O snapshots

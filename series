@@ -1,4 +1,5 @@
 fix_bitmap_range2_check.patch
+e2fsprogs_exclude_bitmap_on-disk_format.patch
 e2fsprogs__snapshots_on-disk_format_changes.patch
 mke2fs_create_big_journal.patch
 e2fsprogs__create-check_the_exclude_bitmap.patch
